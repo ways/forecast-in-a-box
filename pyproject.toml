@@ -10,6 +10,10 @@ authors = [
   { name = "European Centre for Medium-Range Weather Forecasts (ECMWF)", email = "software.support@ecmwf.int" },
 ]
 license = { text = "Apache License Version 2.0" }
+requires-python=">=3.10"
+depedencies = [
+  "fastapi[standard]"
+]
 
 [project.urls]
 "Source code" = "https://github.com/ecmwf/forecast-in-a-box"
@@ -17,5 +21,8 @@ license = { text = "Apache License Version 2.0" }
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.isort]
-profile = "black"
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.format]
+indent-style = "tab"
