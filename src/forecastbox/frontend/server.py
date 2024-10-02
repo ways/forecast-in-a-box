@@ -7,6 +7,8 @@ endpoints:
   [get]  /jobs/{job_id}	=> returns job.html with JobStatus / JobResult
 """
 
+from contextlib import asynccontextmanager
+from cascade.v2.core import JobInstance
 import orjson
 from typing_extensions import Self, Union
 from fastapi import FastAPI, Form, Request, HTTPException, status
@@ -15,21 +17,22 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.datastructures import UploadFile
 import jinja2
 import pkgutil
-from forecastbox.api.common import JobStatus, JobTemplateExample, TaskDAG, JobTemplate, RegisteredTask
+from forecastbox.api.common import JobStatus, JobTemplateExample, TaskDAG, RegisteredTask, JinjaTemplate
 import forecastbox.scheduler as scheduler
+import forecastbox.frontend.cascade.catalog as catalog
 import forecastbox.plugins.lookup as plugin_lookup
+import forecastbox.plugins.examples as plugin_examples
 import logging
 import os
 import httpx
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.responses import PlainTextResponse
 
-logger = logging.getLogger("uvicorn." + __name__)  # TODO instead configure uvicorn the same as the app
-app = FastAPI()
+logger = logging.getLogger(__name__)
 client_error = lambda e: HTTPException(status_code=400, detail=e)
 
 
-class StaticExecutionContext:
+class AppContext:
 	"""Provides static files and URLs.
 	Encapsulates accessing config and interacting with package data.
 	Initializes lazily to make this module importible outside execution context."""
@@ -45,7 +48,9 @@ class StaticExecutionContext:
 	def __init__(self) -> None:
 		# urls
 		self.job_submit_url = f"{os.environ['FIAB_CTR_URL']}/jobs/submit"
+		self.cascade_submit_url = f"{os.environ['FIAB_CTR_URL']}/jobs/cascade_submit"
 		self.job_status_url = lambda job_id: f"{os.environ.get('FIAB_CTR_URL', '')}/jobs/status/{job_id}"
+		self.client = httpx.AsyncClient()
 
 		# static html
 		# index_html_raw = pkgutil.get_data("forecastbox.frontend.static", "index.html")
@@ -62,12 +67,23 @@ class StaticExecutionContext:
 				raise FileNotFoundError(fname)
 			return template_env.from_string(template_raw.decode())
 
-		self.template_job = get_template("job.html")
-		self.template_index = get_template("index.html")
-		self.template_prepare = get_template("prepare.html")
+		self.templates: dict[JinjaTemplate, jinja2.Template] = {e: get_template(e.value) for e in JinjaTemplate}
 
 		# from fastapi.staticfiles import StaticFiles
 		# app.mount("/static", StaticFiles(directory="static"), name="static") # TODO for styles.css etc
+
+	async def close(self) -> None:
+		await self.client.aclose()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+	instance = AppContext.get()
+	yield
+	await instance.close()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 @app.api_route("/status", methods=["GET", "HEAD"])
@@ -85,65 +101,83 @@ async def http_exception_handler(request, exc):
 	return PlainTextResponse(s, status_code=exc.status_code)
 
 
-@app.get("/", response_class=HTMLResponse)
-async def index() -> str:
+@app.get("/")
+async def default_job(request: Request) -> RedirectResponse:
+	redirect_url = request.url_for("prepare_example", example_name="hello_aifsl")
+	return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get("/main", response_class=HTMLResponse)
+async def main_menu() -> str:
 	"""The user selects which job type to submit"""
 	template_params = {
-		"jobs": [e.value for e in JobTemplateExample],
+		"jobs": [e.value for e in JobTemplateExample] + list(catalog.get_registered_jobs()),
 		"tasks": [f"{e.value}: {plugin_lookup.get_task(e).signature_repr()}" for e in RegisteredTask],
 	}
-	return StaticExecutionContext.get().template_index.render(template_params)
+	return AppContext.get().templates[JinjaTemplate.main].render(template_params)
 
 
 @app.post("/select")
 async def select(request: Request, example_name: Annotated[str, Form()]) -> RedirectResponse:
 	"""Takes job type, returns redirect to form for filling out job parameters"""
-	redirect_url = request.url_for("prepare_example", example_name=example_name)
+	if catalog.get_cascade(example_name) is not None:
+		redirect_url = request.url_for("prepare_cascade", example_name=example_name)
+	else:
+		redirect_url = request.url_for("prepare_example", example_name=example_name)
 	return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
-def template_to_form_params(job_template: JobTemplate) -> list[tuple[str, str, str]]:
-	return [
-		(
-			f"{task_name}.{param_name}",
-			param.clazz,
-			param.default,
-		)
-		for task_name, task_definition in job_template.tasks
-		for param_name, param in task_definition.user_params.items()
-	]
+@app.get("/prepare_cascade/{example_name}", response_class=HTMLResponse)
+async def prepare_cascade(example_name: str) -> str:
+	cascade_job = catalog.get_cascade(example_name)
+	if cascade_job is None:
+		raise ValueError(f"not a cascade job: {example_name}")
+	template_params = cascade_job.form_builder.params
+	template_name = cascade_job.form_builder.template
+	return AppContext.get().templates[template_name].render(template_params)
 
 
 @app.get("/prepare_example/{example_name}", response_class=HTMLResponse)
 async def prepare_example(example_name: str) -> str:
 	"""The form for filling out job parameters and submitting the job itself, via a job template"""
-	job_template = plugin_lookup.resolve_example(JobTemplateExample(example_name)).get_or_raise(client_error)
-	template_params = {"job_name": example_name, "job_type": "example", "params": template_to_form_params(job_template)}
-	return StaticExecutionContext.get().template_prepare.render(template_params)
+	example = JobTemplateExample(example_name)
+	template_params = plugin_examples.to_form_params(example).get_or_raise(client_error)
+	template_name = plugin_examples.to_jinja_template(example)
+	return AppContext.get().templates[template_name].render(template_params)
 
 
 @app.post("/prepare_builder", response_class=HTMLResponse)
 async def prepare_builder(job_pipeline: Annotated[str, Form()]) -> str:
 	"""The form for filling out job parameters and submitting the job itself, via custom built job"""
 	task_pipeline = plugin_lookup.build_pipeline(job_pipeline).get_or_raise(client_error)
-	template = plugin_lookup.resolve_builder_linear(task_pipeline).get_or_raise(client_error)
+	builder = plugin_lookup.resolve_builder_linear(task_pipeline).get_or_raise(client_error)
+	job_params = [
+		(
+			f"{task_name}.{param_name}",
+			param.clazz,
+			param.default,
+			f"{task_name}.{param_name}",
+		)
+		for task_name, task_definition in builder.tasks
+		for param_name, param in task_definition.user_params.items()
+	]
 	template_params = {
 		"job_name": job_pipeline,
 		"job_type": "custom",
-		"params": template_to_form_params(template),
+		"params": job_params,
 	}
-	return StaticExecutionContext.get().template_prepare.render(template_params)
+	return AppContext.get().templates[JinjaTemplate.prepare].render(template_params)
 
 
-async def submit_int(task_dag: TaskDAG) -> str:
-	async with httpx.AsyncClient() as client:  # TODO pool the client
-		response_raw = await client.put(StaticExecutionContext.get().job_submit_url, json=task_dag.model_dump())
-		if response_raw.status_code != httpx.codes.OK:
-			logger.error(response_raw.status_code)
-			logger.error(response_raw.text)
-			raise HTTPException(status_code=500, detail="Internal Server Error")
-		response_json = response_raw.json()  # TODO how is this parsed? Orjson?
-		job_status = JobStatus(**response_json)
+async def submit_int(data: TaskDAG | JobInstance, url: str) -> str:
+	client = AppContext.get().client
+	response_raw = await client.put(url, content=data.model_dump_json().encode())
+	if response_raw.status_code != httpx.codes.OK:
+		logger.error(response_raw.status_code)
+		logger.error(response_raw.text)
+		raise HTTPException(status_code=500, detail="Internal Server Error")
+	response_json = response_raw.json()  # TODO how is this parsed? Orjson?
+	job_status = JobStatus(**response_json)
 	return job_status.job_id.job_id
 
 
@@ -153,21 +187,38 @@ async def submit_form(request: Request) -> Union[RedirectResponse, TaskDAG]:
 	params = {k: v for k, v in form.items() if isinstance(v, str) and not k.startswith("fiab.int.")}
 	job_type, job_name = params.pop("job_type"), params.pop("job_name")
 	if job_type == "example":
-		job_template = plugin_lookup.resolve_example(JobTemplateExample(job_name)).get_or_raise(client_error)
+		example = JobTemplateExample(job_name)
+		maybe_builder = plugin_examples.to_builder(example, params)
+		maybe_params = plugin_examples.from_form_params(example, params)
+		builder = maybe_builder.append(maybe_params.e).get_or_raise(client_error)
+		params_resolved = maybe_params.get_or_raise(client_error)
 	elif job_type == "custom":
 		task_pipeline = plugin_lookup.build_pipeline(job_name).get_or_raise(client_error)
-		job_template = plugin_lookup.resolve_builder_linear(task_pipeline).get_or_raise(client_error)
+		builder = plugin_lookup.resolve_builder_linear(task_pipeline).get_or_raise(client_error)
+		params_resolved = params
+	elif job_type == "cascade":
+		if "fiab.int.action.store" in form:
+			raise NotImplementedError("cascade jobs dont support this")
+		elif "fiab.int.action.launch" not in form:
+			raise NotImplementedError("not found any support form action")
+		cascade_job = catalog.get_cascade(job_name)
+		if cascade_job is None:
+			raise ValueError(f"not a cascade job: {job_name}")
+		job_instance = cascade_job.job_builder(params).build().get_or_raise(client_error)
+		job_id = await submit_int(job_instance, AppContext.get().cascade_submit_url)
+		redirect_url = request.url_for("job_status", job_id=job_id)
+		return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 	else:
 		raise NotImplementedError(job_type)
-	task_dag = scheduler.build(job_template, params).get_or_raise(client_error)
+	task_dag = scheduler.build(builder, params_resolved).get_or_raise(client_error)
 	if "fiab.int.action.launch" in form:
-		job_id = await submit_int(task_dag)
+		job_id = await submit_int(task_dag, AppContext.get().job_submit_url)
 		redirect_url = request.url_for("job_status", job_id=job_id)
 		return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 		# NOTE we dont really want to redirect since we *have* the status.
 		# The code below returns that templated, but doesnt change URL so refresh wont work. Dont forget to add response_class=HTMLResponse
 		# template_params = {**job_status.model_dump(), "refresh_url": f"jobs/{job_status.job_id.job_id}"}
-		# return StaticExecutionContext.get().template_job.render(template_params)
+		# return AppContext.get().templates[JinjaTemplate.job].render(template_params)
 	elif "fiab.int.action.store" in form:
 		return task_dag
 	else:
@@ -181,21 +232,21 @@ async def submit_file(request: Request) -> RedirectResponse:
 		raise TypeError(type(form["config_file"]))
 	contents = orjson.loads(await form["config_file"].read())
 	task_dag = TaskDAG(**contents)
-	job_id = await submit_int(task_dag)
+	job_id = await submit_int(task_dag, AppContext.get().job_submit_url)
 	redirect_url = request.url_for("job_status", job_id=job_id)
 	return RedirectResponse(redirect_url, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
 async def job_status(request: Request, job_id: str) -> str:
-	async with httpx.AsyncClient() as client:  # TODO pool the client
-		response_raw = await client.get(StaticExecutionContext.get().job_status_url(job_id))
-		if response_raw.status_code != httpx.codes.OK:
-			logger.error(response_raw.status_code)
-			logger.error(response_raw.text)
-			raise HTTPException(status_code=500, detail="Internal Server Error")
-		response_json = response_raw.json()  # TODO how is this parsed? Orjson?
-		job_status = JobStatus(**response_json)
+	client = AppContext.get().client
+	response_raw = await client.get(AppContext.get().job_status_url(job_id))
+	if response_raw.status_code != httpx.codes.OK:
+		logger.error(response_raw.status_code)
+		logger.error(response_raw.text)
+		raise HTTPException(status_code=500, detail="Internal Server Error")
+	response_json = response_raw.json()  # TODO how is this parsed? Orjson?
+	job_status = JobStatus(**response_json)
 	job_status_dump = job_status.model_dump()
 	job_status_dump["stages"] = list(
 		(
@@ -205,4 +256,4 @@ async def job_status(request: Request, job_id: str) -> str:
 		for k, v in job_status_dump["stages"].items()
 	)
 	template_params = {**job_status_dump, "refresh_url": f"../jobs/{job_status.job_id.job_id}"}
-	return StaticExecutionContext.get().template_job.render(template_params)
+	return AppContext.get().templates[JinjaTemplate.job].render(template_params)

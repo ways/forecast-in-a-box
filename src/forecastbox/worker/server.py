@@ -5,9 +5,9 @@ The fast-api server providing the worker's rest api
 # endpoints:
 #   [put] submit(job_id: str, job_name: str/enum, job_params: dict[str, Any]) -> Ok
 #   [get] results(job_id: str, page: int) -> DataBlock
-#      ↑ used by either frontend to get results, or by other worker to obtain inputs for itself
+# ↑ used by either frontend to get results, or by other worker to obtain inputs for itself
 #   [post] read_from(hostname: str, job_id: str) -> Ok
-#      ↑ issued by controller so that this worker can obtain its inputs via `hostname::results(job_id)` call
+# ↑ issued by controller so that this worker can obtain its inputs via `hostname::results(job_id)` call
 
 from contextlib import asynccontextmanager
 import logging
@@ -20,15 +20,19 @@ import os
 from forecastbox.api.common import TaskDAG, WorkerId, WorkerRegistration
 import forecastbox.worker.reporting as reporting
 import forecastbox.worker.entrypoint as entrypoint
-import forecastbox.worker.environment_manager as environment_manager
 import forecastbox.worker.db as db
 from multiprocessing import Manager
+import time
 
-logger = logging.getLogger("uvicorn." + __name__)  # TODO instead configure uvicorn the same as the app
+logger = logging.getLogger(__name__)
 
 
 class AppContext:
 	_instance: Optional[Self] = None
+
+	# NOTE no need to overdo now; consider @retry for serious usecases
+	register_retry_count: int = 3
+	register_sleep_secs: int = 1
 
 	@classmethod
 	def get(cls) -> Self:
@@ -39,11 +43,20 @@ class AppContext:
 	def __init__(self) -> None:
 		self.controller_url = os.environ["FIAB_CTR_URL"]
 		self.self_url = os.environ["FIAB_WRK_URL"]
-		environment_manager.set_up_python()
-		with httpx.Client() as client:  # TODO pool the client
-			registration = WorkerRegistration.from_raw(self.self_url)
-			response = client.put(f"{self.controller_url}/workers/register", json=registration.model_dump())
-			self.worker_id = WorkerId(**response.json())
+		self.memory_mb = int(os.environ["FIAB_WRK_MEM_MB"])
+		with httpx.Client() as client:
+			registration = WorkerRegistration.from_raw(self.self_url, self.memory_mb)
+			logger.info(f"registering worker {self.self_url} to controller {self.controller_url}")
+			for i in range(self.register_retry_count):
+				try:
+					response = client.put(f"{self.controller_url}/workers/register", json=registration.model_dump())
+					self.worker_id = WorkerId(**response.json())
+					break
+				except httpx.ConnectError:
+					logger.warning("failed to register, sleeping and retrying")
+					time.sleep(self.register_sleep_secs)
+			if not self.worker_id:
+				raise ValueError("no more retries, failed to register")
 		self.mem_manager = Manager()
 		self.db_context = db.DbContext(
 			mem_db=db.MemDb(self.mem_manager),
@@ -52,7 +65,9 @@ class AppContext:
 
 	@property
 	def callback_context(self) -> reporting.CallbackContext:
-		return reporting.CallbackContext(worker_id=self.worker_id.worker_id, controller_url=self.controller_url, self_url=self.self_url)
+		return reporting.HttpxCallbackContext(
+			worker_id=self.worker_id.worker_id, controller_url=self.controller_url, self_url=self.self_url
+		)
 
 
 @asynccontextmanager

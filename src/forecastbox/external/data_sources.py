@@ -1,5 +1,5 @@
 """
-Atomic Tasks for data sources: eg, mars querise
+Atomic Tasks for data sources: eg, mars queries
 """
 
 import datetime as dt
@@ -8,8 +8,12 @@ import earthkit.data
 
 
 def oper_sfc_box_query(box_center_lat: int, box_center_lon: int, params: list[str], step: int, days_ago: int) -> bytes:
+	earthkit.data.settings.auto_save_settings = False
+	earthkit.data.settings.set("cache-policy", "user")
+
 	mars_box = [box_center_lat + 20, box_center_lon - 20, box_center_lat - 20, box_center_lon + 20]
 	date = (dt.datetime.utcnow().date() - dt.timedelta(days=(1 + days_ago))).strftime("%Y-%m-%d")
+	hotfix = "/".join(e[0] for e in params)
 	grib_reader = earthkit.data.from_source(
 		"mars",
 		stream="oper",
@@ -21,7 +25,7 @@ def oper_sfc_box_query(box_center_lat: int, box_center_lon: int, params: list[st
 		time="00:00:00",
 		levtype="sfc",
 		levelist="50",
-		param=params,
+		param=hotfix,
 	)
 
 	obuf = io.BytesIO()

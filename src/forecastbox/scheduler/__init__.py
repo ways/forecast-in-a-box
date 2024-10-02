@@ -2,7 +2,7 @@
 Converts high level input of the user into an execution plan (sequence of individual functions) to be run on the worker(s)
 """
 
-from forecastbox.api.common import JobTemplate, TaskDAG, Task, DatasetId, TaskDefinition
+from forecastbox.api.common import TaskDAGBuilder, TaskDAG, Task, DatasetId, TaskDefinition
 from typing import Any
 from collections import defaultdict
 from forecastbox.utils import Either
@@ -15,10 +15,10 @@ def linearize(job_definition: TaskDAG) -> TaskDAG:
 	return job_definition
 
 
-def build(job_template: JobTemplate, params: dict[str, str]) -> Either[TaskDAG, list[str]]:
+def build(builder: TaskDAGBuilder, params: dict[str, str]) -> Either[TaskDAG, list[str]]:
 	errors: list[str] = []
 	# TODO wrap in try catch
-	task_defin: dict[str, TaskDefinition] = dict(job_template.tasks)
+	task_defin: dict[str, TaskDefinition] = dict(builder.tasks)
 	params_per_task: dict[str, dict[str, Any]] = defaultdict(dict)
 	for k, v in params.items():
 		task_name, param = k.split(".", 1)
@@ -37,13 +37,19 @@ def build(job_template: JobTemplate, params: dict[str, str]) -> Either[TaskDAG, 
 	tasks = [
 		Task(
 			name=task_name,
-			static_params=params_per_task[task_name],
-			dataset_inputs={k: DatasetId(dataset_id=v) for k, v in job_template.dynamic_task_inputs.get(task_name, {}).items()},
+			static_params_kw=params_per_task[task_name],
+			static_params_ps={},
+			dataset_inputs_kw={k: DatasetId(dataset_id=v) for k, v in builder.dynamic_task_inputs.get(task_name, {}).items()},
+			dataset_inputs_ps={},
+			classes_inputs_kw=task_definition.dynamic_param_classes,
+			classes_inputs_ps={},
 			entrypoint=task_definition.entrypoint,
+			func=None,
 			output_name=DatasetId(dataset_id=task_name),
+			output_class=task_definition.output_class,
 			environment=task_definition.environment,
 		)
-		for task_name, task_definition in job_template.tasks
+		for task_name, task_definition in builder.tasks
 	]
-	task_dag = TaskDAG(tasks=tasks, output_id=DatasetId(dataset_id=job_template.final_output_at))
-	return validation.of_dag(task_dag, job_template).append(errors)
+	task_dag = TaskDAG(tasks=tasks, output_id=DatasetId(dataset_id=builder.final_output_at))
+	return validation.of_dag(task_dag, builder).append(errors)

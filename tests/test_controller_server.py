@@ -29,12 +29,23 @@ def test_job_not_found():
 
 
 def test_job_submit():
+	registration = WorkerRegistration.from_raw("http://localhost:8000", 1024)
+	response_raw = client.put("/workers/register", json=registration.model_dump())
+	assert response_raw.status_code == 200
+	worker_id = WorkerId(**response_raw.json())
+	assert worker_id.worker_id is not None
+
 	task = Task(
 		name="step1",
-		static_params={},
-		dataset_inputs={},
+		static_params_kw={},
+		static_params_ps={},
+		dataset_inputs_kw={},
+		dataset_inputs_ps={},
+		classes_inputs_kw={},
+		classes_inputs_ps={},
 		entrypoint="entrypoint",
 		output_name=DatasetId(dataset_id="output"),
+		output_class="bytes",
 		environment=TaskEnvironment(),
 	)
 	job_definition = TaskDAG(job_type=JobTemplateExample.hello_world, tasks=[task], output_id=DatasetId(dataset_id="output"))
@@ -47,11 +58,3 @@ def test_job_submit():
 	assert r2.status_code == 200
 	r2status = JobStatus(**r2.json())
 	assert r2status.job_id.job_id == r1status.job_id.job_id
-
-
-def test_worker_registration():
-	registration = WorkerRegistration.from_raw("http://localhost:8000")
-	response_raw = client.put("/workers/register", json=registration.model_dump())
-	assert response_raw.status_code == 200
-	worker_id = WorkerId(**response_raw.json())
-	assert worker_id.worker_id is not None

@@ -1,10 +1,11 @@
 # this makes all the commands here use the local venv
-export VIRTUAL_ENV := ".venv"
-export PATH := VIRTUAL_ENV + "/bin:" + env_var('PATH')
+set dotenv-path := ".env"
 
 # creates local venv, install package + dev requirements
 setup:
-	python -m venv $VIRTUAL_ENV
+	python -m venv ".venv"
+	echo 'VIRTUAL_ENV=".venv"' > .env
+	echo 'PATH="$(VIRTUAL_ENV)/bin:$(PATH)"' >> .env
 	pip install uv
 	uv pip install --upgrade -r requirements.txt
 	uv pip install --upgrade -r requirements-dev.txt
@@ -98,8 +99,7 @@ run_docker_uv model_repo:
 		--network host \
 		-v {{model_repo}}:/fiab/models:ro \
 		-v ~/.ecmwfapirc:/root/.ecmwfapirc:ro \
-		fiab-runner-base \
-		python -m forecastbox.standalone.entrypoint
+		fiab-runner-base
 
 # deletes temporary files, build files, caches
 clean:
@@ -107,4 +107,3 @@ clean:
 	find . -name '__pycache__' -exec rm -fr {} +
 	rm -rf build dist lightning_logs
 	rm -f entrypoint.spec # NOTE we may want to actually preserve this, presumably after `dist` refactor. Don't forget to remove from .gitignore then
-

@@ -5,7 +5,8 @@ Currently most is hardcoded, but will be replaced by reading from external, eith
 """
 
 import logging
-from forecastbox.api.common import RegisteredTask, JobTemplate, TaskDefinition, JobTemplateExample, TaskParameter, TaskEnvironment
+import pathlib
+from forecastbox.api.common import RegisteredTask, TaskDAGBuilder, TaskDefinition, TaskParameter, TaskEnvironment
 import forecastbox.api.validation as validation
 from forecastbox.utils import assert_never, Either
 
@@ -74,17 +75,19 @@ def get_task(task: RegisteredTask) -> TaskDefinition:
 					"params": TaskParameter(clazz="marsParamList"),
 				},
 				entrypoint="forecastbox.external.data_sources.oper_sfc_box_query",
-				output_class="grib",
+				output_class="grib.earthkit",
 				environment=TaskEnvironment(packages=["numpy<2.0.0", "ecmwf-api-client", "earthkit-data", "earthkit-plots"]),
 			)
 		case RegisteredTask.aifs_fetch_and_predict:
 			return TaskDefinition(
 				user_params={
-					"predicted_params": TaskParameter(clazz="marsParamList"),
-					"target_step": TaskParameter(clazz="int"),  # hours, div by 6
+					"predicted_params": TaskParameter(clazz="aifsOutputParamList", default="2t, q"),
+					"target_step": TaskParameter(clazz="six_hours"),
+					"start_date": TaskParameter(clazz="datetime"),
+					"model_id": TaskParameter(clazz="enum[aifs-small]"),
 				},
 				entrypoint="forecastbox.external.hello_aifs.entrypoint_forecast",
-				output_class="grib",
+				output_class="grib.earthkit",
 				environment=TaskEnvironment(
 					packages=[
 						"numpy<2.0.0",
@@ -97,13 +100,16 @@ def get_task(task: RegisteredTask) -> TaskDefinition:
 		case RegisteredTask.plot_single_grib:
 			return TaskDefinition(
 				user_params={
-					"box_center_lat": TaskParameter(clazz="latitude"),
-					"box_center_lon": TaskParameter(clazz="longitude"),
+					"box_lat1": TaskParameter(clazz="latitude"),
+					"box_lat2": TaskParameter(clazz="latitude"),
+					"box_lon1": TaskParameter(clazz="longitude"),
+					"box_lon2": TaskParameter(clazz="longitude"),
 					"grib_idx": TaskParameter(clazz="int", default="0"),
+					"grib_param": TaskParameter(clazz="Optional[marsParam]", default=""),
 				},
 				entrypoint="forecastbox.external.data_sinks.plot_single_grib",
 				output_class="png",  # I guess
-				dynamic_param_classes={"input_grib": "grib"},
+				dynamic_param_classes={"input_grib": "grib.earthkit"},
 				environment=TaskEnvironment(packages=["numpy<2.0.0", "earthkit-data", "earthkit-plots"]),
 			)
 		case RegisteredTask.grib_to_file:
@@ -113,7 +119,7 @@ def get_task(task: RegisteredTask) -> TaskDefinition:
 				},
 				entrypoint="forecastbox.external.data_sinks.grib_to_file",
 				output_class="str",
-				dynamic_param_classes={"input_grib": "grib"},
+				dynamic_param_classes={"input_grib": "grib.earthkit"},
 				environment=TaskEnvironment(packages=["numpy<2.0.0", "earthkit-data"]),
 			)
 		case RegisteredTask.mars_enfo_range_temp:
@@ -131,6 +137,21 @@ def get_task(task: RegisteredTask) -> TaskDefinition:
 				entrypoint="forecastbox.external.temperature_nbeats.predict",
 				output_class="str",
 				dynamic_param_classes={"input_df": "ndarray"},
+			)
+		case RegisteredTask.grib_mir:
+			return TaskDefinition(
+				user_params={
+					"area": TaskParameter(clazz="latlonArea"),  # eventually Optional
+				},
+				entrypoint="forecastbox.external.grib_mir.transform",
+				output_class="grib.mir",
+				dynamic_param_classes={"input_grib": "grib.mir"},
+				environment=TaskEnvironment(
+					packages=[
+						str(pathlib.Path.home() / "src/mir-python/dist/mir_python-0.2.0-cp311-cp311-linux_x86_64.whl")
+						# "mir-python" # not published yet
+					]
+				),
 			)
 		case s:
 			assert_never(s)
@@ -153,18 +174,19 @@ def build_pipeline(job_pipeline: str) -> Either[list[RegisteredTask], list[str]]
 		return Either.ok(tasks)
 
 
-def resolve_builder_linear(task_names: list[RegisteredTask]) -> Either[JobTemplate, str]:
+def resolve_builder_linear(task_names: list[RegisteredTask]) -> Either[TaskDAGBuilder, list[str]]:
 	# TODO wrap in try catch, extend the validation
 	tasks: list[tuple[str, TaskDefinition]] = []
 	dynamic_task_inputs = {}
+	errors = []
 	for i, e in enumerate(task_names):
 		task = get_task(e)
 		dyn_params = len(task.dynamic_param_classes)
 		if dyn_params == 1:
 			dynamic_task_inputs[e.value] = {list(task.dynamic_param_classes.keys())[0]: tasks[i - 1][0]}
 		elif dyn_params > 1:
-			# TODO append to val
-			raise ValueError(f"task {e.value} at position {i} in the sequence needs >1 dyn params, unsupported")
+			errors.append(f"task {e.value} at position {i} in the sequence needs >1 dyn params, unsupported")
+			continue
 		tasks.append(
 			(
 				e.value,
@@ -172,27 +194,5 @@ def resolve_builder_linear(task_names: list[RegisteredTask]) -> Either[JobTempla
 			)
 		)
 	final_output_at = task_names[-1].value
-	rv = JobTemplate(tasks=tasks, dynamic_task_inputs=dynamic_task_inputs, final_output_at=final_output_at)
-	return validation.of_template(rv)
-
-
-def resolve_example(job_type: JobTemplateExample) -> Either[JobTemplate, str]:
-	"""Looks up a job template -- for retrieving the list of user params / filling it with params
-	to obtain a job definition"""
-	match job_type:
-		case JobTemplateExample.hello_world:
-			return resolve_builder_linear([RegisteredTask.hello_world])
-		case JobTemplateExample.hello_tasks:
-			return resolve_builder_linear([RegisteredTask.create_numpy_array, RegisteredTask.display_numpy_array])
-		case JobTemplateExample.hello_torch:
-			return resolve_builder_linear([RegisteredTask.hello_torch])
-		case JobTemplateExample.hello_image:
-			return resolve_builder_linear([RegisteredTask.hello_image])
-		case JobTemplateExample.hello_earth:
-			return resolve_builder_linear([RegisteredTask.mars_oper_sfc_box, RegisteredTask.plot_single_grib])
-		case JobTemplateExample.temperature_nbeats:
-			return resolve_builder_linear([RegisteredTask.mars_enfo_range_temp, RegisteredTask.nbeats_predict])
-		case JobTemplateExample.hello_aifsl:
-			return resolve_builder_linear([RegisteredTask.aifs_fetch_and_predict, RegisteredTask.plot_single_grib])
-		case s:
-			assert_never(s)
+	rv = TaskDAGBuilder(tasks=tasks, dynamic_task_inputs=dynamic_task_inputs, final_output_at=final_output_at)
+	return validation.of_builder(rv).append(errors)

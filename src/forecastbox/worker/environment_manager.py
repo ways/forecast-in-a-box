@@ -3,19 +3,11 @@ Responsible for installing python modules required by a Task/Job in an isolated 
 and cleaning up afterwards.
 """
 
-# NOTE sadly python doesn't offer `tempfile.get_temporary_directory_location` or similar
-# We thus need to return the tempfile object for a later cleanup, instead of being able to
-# derive it from `job_id` only
-# TODO the whole `set_up_python` thing should probably displace the whole pyinstaller business,
-# and we should ship just bash script that installs uv, uv then bootstraps python + venv,
-# that python + venv then install the main package, and last step of the bash is we launch
-# `uv_python -m standalone.entrypoint`. The prepare here would remain, but would actually create
-# a regular venv and pip install in there
-
 from forecastbox.api.common import TaskEnvironment
+from contextlib import contextmanager
 import tempfile
 import subprocess
-from typing import Optional
+from typing import Optional, Iterator
 import sys
 import os
 import logging
@@ -23,33 +15,33 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def set_up_python():
-	if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-		uv_command = f"{sys._MEIPASS}/uv/uv"
-		subprocess.run([uv_command, "python", "install", "3.11"], check=True)
-
-
-def prepare(job_id: str, environment: TaskEnvironment) -> Optional[tempfile.TemporaryDirectory]:
-	uv_python: list[str]
-	if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-		uv_command = f"{sys._MEIPASS}/uv/uv"
-		uv_query = subprocess.run([uv_command, "python", "list"], check=True, capture_output=True)
-		interpreter_info = [e for e in uv_query.stdout.decode().split("\n") if "python3.11" in e][0]
-		interpreter_exec = interpreter_info[interpreter_info.index(" ") :].split("->", 1)[0].strip()
-		logger.info(f"obtained interpreter {interpreter_exec}")
-		interpreter_path = f"{os.getcwd()}/{interpreter_exec}"
-		logger.info(f"interpreter fullpath {interpreter_path}")
-		uv_python = ["--python", interpreter_path]
-	else:
-		uv_command = "uv"
-		uv_python = []
-
+@contextmanager
+def Environment(environment: TaskEnvironment) -> Iterator[int]:
+	"""Installs given packages into a temporary directory, just for this job -- a lightweight venv.
+	Assumes `uv` binary is available, and that we are already in a usable venv of the right python
+	version -- as provided by `fiab.sh`"""
+	td: Optional[tempfile.TemporaryDirectory] = None
+	# TODO consider sending notify_update(preparing, running) here, instead of from the invoker, for granularity
 	if environment.packages:
 		td = tempfile.TemporaryDirectory()
-		install_command = [uv_command, "pip", "install", "--target", td.name] + uv_python
+		venv_command = ["uv", "venv", td.name]
+		# NOTE we create a venv instead of just plain directory, because some of the packages create files
+		# outside of site-packages. Thus we then install with --prefix, not with --target
+		subprocess.run(venv_command, check=True)
+		install_command = ["uv", "pip", "install", "--prefix", td.name]
+		if os.environ.get("FIAB_OFFLINE", "") == "YES":
+			install_command += ["--offline"]
+		if cache_dir := os.environ.get("FIAB_CACHE", ""):
+			install_command += ["--cache-dir", cache_dir]
+		# NOTE sadly python doesn't offer `tempfile.get_temporary_directory_location` or similar
+		# We thus need to return the tempfile object for a later cleanup, instead of being able to
+		# derive it from `job_id` only
 		install_command.extend(set(environment.packages))
 		subprocess.run(install_command, check=True)
-		sys.path.append(td.name)
-		return td
-	else:
-		return None
+		# TODO wee bit fragile -- try to obtain it from {td.name}/bin/activate?
+		sys.path.append(f"{td.name}/lib/python3.11/site-packages/")
+	try:
+		yield 1  # dummy for contextmanager protocol
+	finally:
+		if td is not None:
+			td.cleanup()

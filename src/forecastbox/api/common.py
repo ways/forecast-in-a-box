@@ -7,9 +7,10 @@ Pydantic models for interchanges between ui, controller and worker
 from pydantic import BaseModel, Field
 from enum import Enum
 import datetime as dt
-from typing import Optional, Any
+from typing import Optional, Any, Callable, cast
 from typing_extensions import Self
-import base64
+from base64 import b64encode, b64decode
+import cloudpickle
 
 
 class JobTemplateExample(str, Enum):
@@ -25,6 +26,13 @@ class JobTemplateExample(str, Enum):
 	hello_earth = "hello_earth"
 	hello_aifsl = "hello_aifsl"
 	temperature_nbeats = "temperature_nbeats"
+
+
+class JinjaTemplate(str, Enum):
+	job = "job.html"
+	main = "index.html"  # index is existing enum field
+	prepare = "prepare.html"
+	aifs = "aifs.html"
 
 
 class RegisteredTask(str, Enum):
@@ -44,6 +52,9 @@ class RegisteredTask(str, Enum):
 	plot_single_grib = "plot_single_grib"
 	display_numpy_array = "display_numpy_array"
 	nbeats_predict = "nbeats_predict"
+
+	# postproc
+	grib_mir = "grib_mir"
 
 	# hybrids
 	hello_world = "hello_world"
@@ -77,7 +88,7 @@ class TaskDefinition(BaseModel):
 
 	entrypoint: str = Field(description="python_module.function_name")
 	user_params: dict[str, TaskParameter]
-	output_class: str  # not eval'd, can be anything
+	output_class: str  # used for serde
 	dynamic_param_classes: dict[str, str] = Field(default_factory=dict)
 	environment: TaskEnvironment = Field(default_factory=TaskEnvironment)
 
@@ -91,11 +102,25 @@ class Task(BaseModel):
 	Created from user's input (validated via TaskDefinition)"""
 
 	name: str  # name of the task within the DAG
-	static_params: dict[str, Any]  # name, value
-	dataset_inputs: dict[str, DatasetId]
-	entrypoint: str = Field(description="python_module.submodules.function_name")
-	output_name: Optional[DatasetId]  # TODO maybe replace with a method yielding just name
+	static_params_kw: dict[str, Any]  # name, value
+	static_params_ps: dict[int, Any]  # position, value
+	dataset_inputs_ps: dict[int, DatasetId]
+	dataset_inputs_kw: dict[str, DatasetId]
+	classes_inputs_kw: dict[str, str]
+	classes_inputs_ps: dict[int, str]
+	entrypoint: Optional[str] = Field(description="python_module.submodules.function_name")
+	func: Optional[str] = Field(None, description="b64 cloud-pickled Callable. Prefered over `entrypoint` if given")
+	output_name: Optional[DatasetId]
+	output_class: str  # used for serde
 	environment: TaskEnvironment
+
+	@staticmethod
+	def func_dec(f: str) -> Callable:
+		return cast(Callable, cloudpickle.loads(b64decode(f)))
+
+	@staticmethod
+	def func_enc(f: Callable) -> str:
+		return b64encode(cloudpickle.dumps(f)).decode("ascii")
 
 
 class TaskDAG(BaseModel):
@@ -108,7 +133,9 @@ class TaskDAG(BaseModel):
 	# TODO add some mechanism for freeing the output_name(dataset_id) as well
 
 
-class JobTemplate(BaseModel):
+class TaskDAGBuilder(BaseModel):
+	"""Used to build html form for parameter inputting, and then together with that the TaskDAG itself"""
+
 	tasks: list[tuple[str, TaskDefinition]]  # NOTE already assumed to be in (some) topological order
 	dynamic_task_inputs: dict[str, dict[str, str]]  # task_name: {param_name: data_source}
 	final_output_at: str
@@ -158,10 +185,11 @@ class WorkerId(BaseModel):
 
 class WorkerRegistration(BaseModel):
 	url_base64: str
+	memory_mb: int
 
 	@classmethod
-	def from_raw(cls, url: str) -> Self:
-		return cls(url_base64=base64.b64encode(url.encode()).decode())
+	def from_raw(cls, url: str, memory_mb: int) -> Self:
+		return cls(url_base64=b64encode(url.encode()).decode(), memory_mb=memory_mb)
 
 	def url_raw(self) -> str:
-		return base64.b64decode(self.url_base64.encode()).decode()
+		return b64decode(self.url_base64.encode()).decode()

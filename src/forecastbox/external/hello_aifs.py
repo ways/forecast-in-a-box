@@ -2,7 +2,7 @@
 Demonstrates aifs inference
 """
 
-from typing import Callable, Optional
+from typing import Callable
 import io
 import logging
 import datetime as dt
@@ -11,6 +11,7 @@ import climetlab as cml
 import tqdm
 from anemoi.inference.runner import DefaultRunner
 import forecastbox.external.models
+from forecastbox.api.type_system import datetime as datetime_convert
 
 logger = logging.getLogger(__name__)
 
@@ -109,16 +110,17 @@ class MarsInput(RequestBasedInput):
 		return cml.load_source("mars", kwargs)
 
 
-def entrypoint_forecast(predicted_params: list[str], target_step: int) -> bytes:
-	# config TODO read from kwargs
-	model_path = forecastbox.external.models.get_path("aifs-small.ckpt")
-	relative_delay = dt.timedelta(days=1)  # TODO how to get a reliable date for which data would be available?
-	save_to_path: Optional[str] = None  # "/tmp/output.grib"
+def entrypoint_forecast(predicted_params: list[tuple[str, int]], target_step: int, start_date: str, model_id: str) -> bytes:
+	start_dt = datetime_convert(start_date)  # NOTE unfortunate quirk of json/pydantic serde
+	# NOTE predicted params is actually list[list], due to unfortunate quirk of json/pydantic serde
+	model_path = forecastbox.external.models.get_path(f"{model_id}.ckpt")
 
 	# prep clasess
-	n = dt.datetime.now() - relative_delay
-	d1 = n - dt.timedelta(hours=n.hour % 6, minutes=n.minute, seconds=n.second, microseconds=n.microsecond)
+	d1 = start_dt - dt.timedelta(
+		hours=start_dt.hour % 6, minutes=start_dt.minute, seconds=start_dt.second, microseconds=start_dt.microsecond
+	)
 	d2 = d1 - dt.timedelta(hours=6)
+	# TODO validate that d1 is not too recent?
 	f: Callable[[dt.datetime], tuple[int, int]] = lambda d: (
 		int(d.strftime("%Y%m%d")),
 		d.hour,
@@ -131,8 +133,6 @@ def entrypoint_forecast(predicted_params: list[str], target_step: int) -> bytes:
 		"expver": 0,
 		"class": "rd",
 	}
-	if save_to_path:
-		output_f = cml.new_grib_output(save_to_path, **grib_keys)
 	obuf = io.BytesIO()
 	output_m = cml.new_grib_output(obuf, **grib_keys)
 
@@ -144,11 +144,11 @@ def entrypoint_forecast(predicted_params: list[str], target_step: int) -> bytes:
 		if "step" in kwargs or "endStep" in kwargs:
 			data = args[0]
 			template = kwargs.pop("template")
-			if template._metadata.get("param", "") in predicted_params and kwargs.get("step", -1) == target_step:
+			param = template._metadata.get("param", "")
+			level = template._metadata.get("levelist", 0)
+			level = level if level else 0  # getting around None
+			if param and ([param, level] in predicted_params) and kwargs.get("step", -1) == target_step:
 				output_m.write(data, template=template, **kwargs)
-
-			if save_to_path:
-				output_f.write(data, template=template, **kwargs)
 
 	# run
 	# TODO how to propagate output field projection?

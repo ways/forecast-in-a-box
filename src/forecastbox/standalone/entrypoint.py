@@ -1,59 +1,72 @@
-# ruff: noqa: F401
+"""
+Entrypoint for the standalone fiab execution (frontend, controller and worker spawned by a single process)
+"""
 
+import asyncio
 import logging
+import logging.config
 import webbrowser
 import time
 import httpx
 import uvicorn
 import os
 from multiprocessing import Process, connection, set_start_method, freeze_support
+from forecastbox.utils import logging_config
 
 
-logger = logging.getLogger(__name__)
-
-
-def dummy_import():
-	"""This is just to persuade pyinstaller to include more of stdlib than is officially declared,
-	so that later uv pip installs work fine. Eventually we'll move this to the .spec file or somewhere"""
-	# fmt: off
-	# torch
-	import pdb
-	import timeit
-	import difflib
-	import cmath
-	import pickletools
-	import unittest.mock
-	# earthkit
-	import fileinput
-	import zoneinfo
-	import sqlite3
-	import plistlib
-	import ctypes.util
-	# fmt: on
+logger = logging.getLogger(__name__ if __name__ != "__main__" else "forecastbox.standalone.entrypoint")
 
 
 def setup_process(env_context: dict[str, str]):
 	"""Invoke at the start of each new process. Configures logging etc"""
-	logging.basicConfig(level=logging.INFO)  # TODO replace with config
+	logging.config.dictConfig(logging_config)
 	os.environ.update(env_context)
+
+
+async def uvicorn_run(app_name: str, port: int) -> None:
+	# NOTE we pass None to log config to not interfere with original logging setting
+	config = uvicorn.Config(
+		app_name,
+		port=port,
+		host="0.0.0.0",
+		log_config=None,
+		log_level=None,
+		workers=1,
+	)
+	server = uvicorn.Server(config)
+	await server.serve()
 
 
 def launch_frontend(env_context: dict[str, str]):
 	setup_process(env_context)
 	port = int(env_context["FIAB_WEB_URL"].rsplit(":", 1)[1])
-	uvicorn.run("forecastbox.frontend.server:app", host="0.0.0.0", port=port, log_level="info", workers=1)
+	try:
+		asyncio.run(uvicorn_run("forecastbox.frontend.server:app", port))
+	except KeyboardInterrupt:
+		pass  # no need to spew stacktrace to log
 
 
 def launch_controller(env_context: dict[str, str]):
 	setup_process(env_context)
 	port = int(env_context["FIAB_CTR_URL"].rsplit(":", 1)[1])
-	uvicorn.run("forecastbox.controller.server:app", host="0.0.0.0", port=port, log_level="info", workers=1)
+	try:
+		asyncio.run(uvicorn_run("forecastbox.controller.server:app", port))
+	except KeyboardInterrupt:
+		pass  # no need to spew stacktrace to log
 
 
 def launch_worker(env_context: dict[str, str]):
-	setup_process(env_context)
+	setup_process(
+		{
+			**env_context,
+			**{"FIAB_WRK_MEM_MB": "2048"},  # doesnt really matter now
+		}
+	)
 	port = int(env_context["FIAB_WRK_URL"].rsplit(":", 1)[1])
-	uvicorn.run("forecastbox.worker.server:app", host="0.0.0.0", port=port, log_level="info", workers=1)
+	try:
+		asyncio.run(uvicorn_run("forecastbox.worker.server:app", port))
+	except KeyboardInterrupt:
+		pass  # no need to spew stacktrace to log
 
 
 def wait_for(client: httpx.Client, root_url: str) -> None:
@@ -97,10 +110,14 @@ if __name__ == "__main__":
 
 	webbrowser.open(context["FIAB_WEB_URL"])
 
-	connection.wait(
-		(
-			controller.sentinel,
-			worker.sentinel,
-			frontend.sentinel,
+	try:
+		connection.wait(
+			(
+				controller.sentinel,
+				worker.sentinel,
+				frontend.sentinel,
+			)
 		)
-	)
+	except KeyboardInterrupt:
+		logger.info("keyboard interrupt, application shutting down")
+		pass  # no need to spew stacktrace to log
