@@ -14,8 +14,8 @@ endpoints:
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 import logging
 from forecastbox.api.common import TaskDAG, JobStatus, JobId, WorkerId, WorkerRegistration, JobStatusUpdate
-from cascade.v2.core import JobInstance, Host, Environment
-import cascade.v2.scheduler as scheduler
+from cascade.low.core import JobInstance, Host, Environment
+import cascade.low.scheduler as scheduler
 import forecastbox.controller.db as db
 from forecastbox.controller.scheduler import MaintenanceScheduler
 from forecastbox.controller.comm import WorkerComm
@@ -89,9 +89,7 @@ async def job_status(job_id: str) -> JobStatus:
 async def worker_register(worker_registration: WorkerRegistration) -> WorkerId:
 	worker = db.Worker(
 		url=worker_registration.url_raw(),
-		params=Host(
-			memory_mb=worker_registration.memory_mb,
-		),
+		params=Host(memory_mb=worker_registration.memory_mb, cpu=1, gpu=0),  # TODO cpu gpu
 		last_seen=dt.datetime.now(),
 	)
 	return db.worker_register(worker)

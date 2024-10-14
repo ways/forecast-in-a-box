@@ -1,6 +1,6 @@
-from cascade.v2.builders import JobBuilder, TaskBuilder
-from cascade.v2.core import Environment, Host
-import cascade.v2.scheduler as scheduler
+from cascade.low.builders import JobBuilder, TaskBuilder
+from cascade.low.core import Environment, Host
+import cascade.low.scheduler as scheduler
 from forecastbox.api.adapter import cascade2fiab
 from forecastbox.worker.reporting import SilentCallbackContext
 from forecastbox.worker.entrypoint import job_entrypoint
@@ -30,7 +30,7 @@ def test_cascade_adapter() -> None:
 	job_instance = builder.with_node("writer", writer).with_edge(prev, "writer", "b").build().get_or_raise()
 
 	# create "cluster" and schedule
-	environment = Environment(hosts={"h1": Host(memory_mb=1024)})
+	environment = Environment(hosts={"h1": Host(memory_mb=1024, cpu=1, gpu=0)})
 	maybe_schedule = scheduler.schedule(job_instance, environment)
 	assert maybe_schedule.e is None
 
