@@ -16,7 +16,7 @@ from .registry import CategoryRegistry
 from .product import Product
 
 
-from ppcascade.fluent import Action as ppAction
+from earthkit.workflows.plugins.pproc.fluent import Action as ppAction
 
 thermal_indices = CategoryRegistry("thermal", "Thermal Indices", "Thermal Indices")
 

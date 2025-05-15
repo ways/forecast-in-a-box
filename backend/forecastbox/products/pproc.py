@@ -13,8 +13,8 @@ from typing import Any
 
 from earthkit.workflows import fluent
 
-from ppcascade.fluent import Action as ppAction
-from ppcascade.templates import derive_template
+from earthkit.workflows.plugins.pproc.fluent import Action as ppAction
+from earthkit.workflows.plugins.pproc.templates import derive_template
 from earthkit.workflows.graph import Graph, deduplicate_nodes
 
 from forecastbox.models import Model

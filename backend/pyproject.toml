@@ -16,6 +16,7 @@ requires-python=">=3.11,<3.12"
 dependencies = [
 	"fastapi",
 	"fastapi_users",
+	"fastapi_users_db_beanie",
 	"httpx",
 	"jinja2",
 	"orjson",

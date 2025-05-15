@@ -25,11 +25,13 @@ Forecast-In-A-Box is a prototype system to deliver ECMWF products on demand as g
 
 ## Installation
 
+Python 3.11 is required due to the built versions of some of the downstream packages.
+
 
 ### Setup Backend
 
 ```bash
-uv venv --seed ./
+uv venv --seed ./ --python 3.11
 uv pip install ./backend
 ```
 
@@ -45,9 +47,10 @@ npm install yarn
 Running the server
 
 ```bash
-yarb dev
+cd frontend
+yarn dev
 
-
+cd backend
 uvicorn forecastbox.entrypoint:app --reload --log-level info
 python -m cascade.gateway tcp://localhost:8067
 ```
