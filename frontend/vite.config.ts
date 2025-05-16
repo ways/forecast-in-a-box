@@ -22,7 +22,7 @@ export default defineConfig({
     }),
   ],
   server: {
-    allowedHosts: ['fiab.harrisoncook.dev'],
+    allowedHosts: ['forecast-in-a-box.ecmwf.int'],
     watch: {
       usePolling: true
     },
