@@ -32,7 +32,7 @@ Python 3.11 is required due to the built versions of some of the downstream pack
 
 ```bash
 uv venv --seed ./ --python 3.11
-uv pip install ./backend
+uv pip install ./backend[all]
 ```
 
 ### Setup frontend
@@ -66,5 +66,8 @@ docker-compose up --build
 ```
 
 ### Notes
+
+The underlying libraries currently requires built C++ stacks, particularly FDB and MIR, however, this FIAB does not require it,
+so they should be removed from the source code.
 
 ```fuser -k 12346/tcp```
