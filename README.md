@@ -67,7 +67,12 @@ docker-compose up --build
 
 ### Notes
 
-The underlying libraries currently requires built C++ stacks, particularly FDB and MIR, however, this FIAB does not require it,
-so they should be removed from the source code.
+Since the wheels for the underlying C++ is new, it has to be manually installed
+when running outside of ATOS.
+
+```bash 
+pip install --prerelease allow fdb5lib mirlib --upgrade
+```
+
 
 ```fuser -k 12346/tcp```
