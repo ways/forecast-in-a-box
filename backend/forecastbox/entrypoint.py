@@ -16,6 +16,7 @@ import time
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+
 from dataclasses import dataclass
 
 import logging
@@ -29,6 +30,11 @@ from .api.routers import job
 from .api.routers import admin
 from .api.routers import auth
 from .api.routers import gateway
+
+# TODO Remove when fckit is auto installed
+import findlibs
+
+findlibs.load("fckit")
 
 LOG = logging.getLogger(__name__)
 
