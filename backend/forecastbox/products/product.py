@@ -162,16 +162,18 @@ class GenericParamProduct(Product):
 
         generic_params_without_levelist = self.generic_params.copy()
         generic_params_without_levelist.pop("levelist")
+        generic_params_without_levelist.update(kwargs)
+
+        generic_params = self.generic_params.copy()
+        generic_params.update(kwargs)
 
         return Qube.from_datacube(
             {
-                **self.generic_params,
-                **kwargs,
+                **generic_params,
             }
         ) | Qube.from_datacube(
             {
                 **generic_params_without_levelist,
-                **kwargs,
             }
         )
 

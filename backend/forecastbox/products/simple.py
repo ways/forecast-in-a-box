@@ -40,8 +40,6 @@ def quickplot(fields: ekd.FieldList, groupby: str = None, subplot_title: str = N
     if not isinstance(fields, ekd.FieldList):
         fields = ekd.FieldList.from_fields(fields)
 
-    print(fields.ls())
-
     if groupby:
         unique_values = iter_utils.flatten(arg.metadata(groupby) for arg in fields)
         unique_values = list(dict.fromkeys(unique_values))
@@ -229,6 +227,18 @@ class DeaccumulatedProduct(GenericTemporalProduct):
     @property
     def qube(self):
         return self.make_generic_qube()
+
+    def model_intersection(self, model: Model):
+        """
+        Model intersection with the product qube.
+
+        Only the accumulation variables are used to create the intersection.
+        """
+        self_qube = self.make_generic_qube(param=model.accumulations)
+
+        intersection = model.qube(self.model_assumptions) & self_qube
+        result = f"step={'/'.join(map(str, model.timesteps))}" / intersection
+        return result
 
     def to_graph(self, product_spec, model, source):
         return self.select_on_specification(product_spec, model.deaccumulate(source)).map(self.named_payload("deaccumulated"))
