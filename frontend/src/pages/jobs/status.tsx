@@ -25,6 +25,7 @@ import MainLayout from '../../layouts/MainLayout';
 import { ExecutionSpecification } from '../../components/interface';
 
 import Cart from './../../components/products/cart';
+import { get } from 'react-hook-form';
 
 export type ProgressResponse = {
   progress: string;
@@ -164,6 +165,8 @@ const HomePage = () => {
     } finally {
       setLoading(false);
       setWorking(false);
+      getStatus();
+
     }
     getStatus();
   };
@@ -197,8 +200,8 @@ const HomePage = () => {
     finally {
       setLoading(false);
       setWorking(false);
+      getStatus();
     }
-    getStatus();
   };
 
   const handleFileUpload = (file) => {
@@ -240,6 +243,7 @@ const HomePage = () => {
     }
     setUploading(false);
     setWorking(false);
+    getStatus();
   };
 
   const [showMoreInfo, setShowMoreInfo] = useState(false);
