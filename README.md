@@ -71,7 +71,7 @@ Since the wheels for the underlying C++ is new, it has to be manually installed
 when running outside of ATOS.
 
 ```bash 
-pip install --prerelease allow fdb5lib mirlib --upgrade
+uv pip install --prerelease allow fdb5lib mirlib --upgrade
 ```
 
 
