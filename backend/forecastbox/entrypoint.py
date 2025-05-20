@@ -11,6 +11,12 @@
 FastAPI Entrypoint
 """
 
+# TODO Remove when fckit is auto installed
+import findlibs
+
+findlibs.load("fckit")
+
+
 from contextlib import asynccontextmanager
 import time
 from fastapi import FastAPI, Request
@@ -31,10 +37,6 @@ from .api.routers import admin
 from .api.routers import auth
 from .api.routers import gateway
 
-# TODO Remove when fckit is auto installed
-import findlibs
-
-findlibs.load("fckit")
 
 LOG = logging.getLogger(__name__)
 
