@@ -8,11 +8,10 @@ WORKDIR /app/frontend/
 COPY ./ ./
 
 # Install fiab dependencies, with caching
-RUN --mount=type=cache,mode=0755,target=/app/frontend/node_modules \
-    npm install && \
-    npm run prodbuild
+# --mount=type=cache,mode=0755,target=/app/frontend/node_modules \
+RUN yarn install
+RUN yarn add vite
+RUN yarn prodbuild
 
-# Switch to an unprivileged nginx prod image
-FROM nginxinc/nginx-unprivileged:1-alpine-slim
-COPY --from=builder /app/frontend/dist /usr/share/nginx/html
-EXPOSE 8080
+CMD ["yarn", "preview"]
+EXPOSE 3000
