@@ -1,25 +1,28 @@
 # Use an official lightweight Python image as the base
-FROM python:3.11
+FROM python:3.11-slim
+
+# Install system deps
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt update && \
+    apt install -y --no-install-recommends git \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
-WORKDIR /app
+WORKDIR /app/backend
 
-# Copy the forecastbox directory into the container
-COPY forecastbox /app/forecastbox
-COPY pyproject.toml /app/pyproject.toml
+# Copy the backend directory into the container
+COPY forecastbox /app/backend/forecastbox/
+COPY pyproject.toml /app/backend/forecastbox/pyproject.toml
 
-# Copy the entrypoint script into the container
-COPY fiab.sh /app/fiab.sh
+# Install UV and create a virtual env
+RUN pip install uv && \
+    uv venv --seed /app/.venv
 
-# Ensure the entrypoint script is executable
-RUN chmod +x /app/fiab.sh
+# Install fiab dependencies, with caching
+RUN --mount=type=cache,mode=0755,target=/root/.cache/uv \
+    uv pip install --link-mode=copy /app/backend/forecastbox[all] && \
+    uv pip install --link-mode=copy --prerelease allow fdb5lib mirlib --upgrade && \
+    uv pip install --link-mode=copy fckitlib
 
-# Install any necessary dependencies (if applicable)
-RUN pip install uv
-
-# Install Rust
-# RUN apt-get update && apt-get install -y curl && \
-#     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y && \
-#     . "$HOME/.cargo/env"
-
-ENTRYPOINT ["/app/fiab.sh"]
+ENV PATH="/app/.venv/bin/:$PATH"
+ENTRYPOINT ["/app/.venv/bin/uvicorn", "forecastbox.entrypoint:app", "--reload", "--log-level", "info"]
