@@ -14,15 +14,16 @@ WORKDIR /app/backend
 COPY forecastbox /app/backend/forecastbox/
 COPY pyproject.toml /app/backend/forecastbox/pyproject.toml
 
-# Install UV and create a virtual env
-RUN pip install uv && \
-    uv venv --seed /app/.venv
+# Install UV
+COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
 
-# Install fiab dependencies, with caching
+# Create a virtual env. Install fiab dependencies, with caching
 RUN --mount=type=cache,mode=0755,target=/root/.cache/uv \
+    uv venv --seed /app/.venv && \
     uv pip install --link-mode=copy /app/backend/forecastbox[all] && \
     uv pip install --link-mode=copy --prerelease allow fdb5lib mirlib --upgrade && \
     uv pip install --link-mode=copy fckitlib
 
 ENV PATH="/app/.venv/bin/:$PATH"
-ENTRYPOINT ["/app/.venv/bin/uvicorn", "forecastbox.entrypoint:app", "--reload", "--log-level", "info"]
+ENTRYPOINT ["/app/.venv/bin/uvicorn", "forecastbox.entrypoint:app", "--log-level", "info"]
+EXPOSE 8080
