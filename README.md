@@ -27,7 +27,6 @@ Forecast-In-A-Box is a prototype system to deliver ECMWF products on demand as g
 
 Python 3.11 is required due to the built versions of some of the downstream packages.
 
-
 ### Setup Backend
 
 ```bash
@@ -59,6 +58,12 @@ python -m cascade.gateway tcp://localhost:8067
 
 Set the ecmwf-api-client keys from [ECMWF API Key Management](https://api.ecmwf.int/v1/key/) as env vars.
 
+Example:
+
+`echo 'ECMWF_API_KEY="12345"
+ECMWF_API_EMAIL="user@example.com"
+' > .env`
+
 Then:
 
 ```bash
@@ -76,5 +81,4 @@ when running outside of ATOS.
 uv pip install --prerelease allow fdb5lib mirlib --upgrade
 ```
 
-
-```fuser -k 12346/tcp```
+If backend holds port open after stopped, kill it: `fuser -k 12346/tcp`
