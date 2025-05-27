@@ -5,7 +5,7 @@ FROM python:3.11-slim
 # Install system deps
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt update && \
-    apt install -y --no-install-recommends git \
+    apt install -y --no-install-recommends git curl iproute2 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory in the container
@@ -26,5 +26,5 @@ RUN --mount=type=cache,mode=0755,target=/root/.cache/uv \
     uv pip install --link-mode=copy fckitlib
 
 ENV PATH="/app/.venv/bin/:$PATH"
-ENTRYPOINT ["/app/.venv/bin/uvicorn", "forecastbox.entrypoint:app", "--log-level", "info"]
-EXPOSE 8080
+ENTRYPOINT ["/app/.venv/bin/uvicorn", "--host", "0.0.0.0", \
+    "forecastbox.entrypoint:app", "--log-level", "info"]
