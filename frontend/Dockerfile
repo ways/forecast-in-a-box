@@ -11,6 +11,9 @@ COPY ./ ./
 # --mount=type=cache,mode=0755,target=/app/frontend/node_modules \
 RUN yarn install
 RUN yarn add vite
+
+ENV VITE_API_BASE="http://backend:8000"
+
 RUN yarn prodbuild
 
 CMD ["yarn", "preview"]

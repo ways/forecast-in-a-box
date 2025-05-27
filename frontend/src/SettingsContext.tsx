@@ -12,6 +12,7 @@
 
 import { createContext, useContext, useState, useEffect } from 'react';
 const backendBase = import.meta.env.VITE_API_BASE || '/api'
+console.log(backendBase)
 
 type Settings = {
   apiUrl: string;

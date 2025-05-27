@@ -65,12 +65,14 @@ Then:
 docker-compose up --build
 ```
 
+Visit http://localhost:8080
+
 ### Notes
 
 Since the wheels for the underlying C++ is new, it has to be manually installed
 when running outside of ATOS.
 
-```bash 
+```bash
 uv pip install --prerelease allow fdb5lib mirlib --upgrade
 ```
 
