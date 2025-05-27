@@ -1,4 +1,5 @@
 # Use an official lightweight Python image as the base
+# 3.11 required by mir
 FROM python:3.11-slim
 
 # Install system deps
@@ -15,7 +16,7 @@ COPY forecastbox /app/backend/forecastbox/
 COPY pyproject.toml /app/backend/forecastbox/pyproject.toml
 
 # Install UV
-COPY --from=ghcr.io/astral-sh/uv:0.7 /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.7.8 /uv /uvx /bin/
 
 # Create a virtual env. Install fiab dependencies, with caching
 RUN --mount=type=cache,mode=0755,target=/root/.cache/uv \
