@@ -21,6 +21,8 @@ services:
       dockerfile: Dockerfile
     volumes:
       - data:/app/data_dir
+    ports:
+      - "8000:8000"
     environment:
       API_URL: "http://backend:8000"
       DATA_PATH: "/app/data_dir"

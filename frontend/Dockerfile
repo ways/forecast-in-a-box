@@ -5,10 +5,10 @@ FROM node:22-slim
 WORKDIR /app/frontend/
 
 # Install tools for testing
-ENV DEBIAN_FRONTEND=noninteractive
-RUN apt update && \
-    apt install -y --no-install-recommends curl iproute2 \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+# ENV DEBIAN_FRONTEND=noninteractive
+# RUN apt update && \
+#     apt install -y --no-install-recommends curl iproute2 \
+#     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Copy the frontend directory into the container
 COPY ./ ./
